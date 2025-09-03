@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 
 interface User {
@@ -22,6 +23,7 @@ interface User {
   bio?: string;
   avatar?: string;
   verified?: boolean;
+  prefix?: string;
 }
 
 interface Chat {
@@ -34,6 +36,8 @@ interface Chat {
   avatar?: string;
   participants?: number[];
   creator?: number;
+  description?: string;
+  public?: boolean;
 }
 
 interface Message {
@@ -54,6 +58,13 @@ interface Report {
   status: 'pending' | 'resolved';
 }
 
+interface Prefix {
+  id: number;
+  name: string;
+  color: string;
+  emoji?: string;
+}
+
 const Index = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -68,11 +79,17 @@ const Index = () => {
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [prefixes, setPrefixes] = useState<Prefix[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Настройки профиля
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [profileBio, setProfileBio] = useState('');
   const [profileUsername, setProfileUsername] = useState('');
+  
+  // Просмотр профиля друга
+  const [viewProfileOpen, setViewProfileOpen] = useState(false);
+  const [viewingUser, setViewingUser] = useState<User | null>(null);
   
   // Репорт пользователя
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -83,6 +100,15 @@ const Index = () => {
   const [isChannelOpen, setIsChannelOpen] = useState(false);
   const [channelName, setChannelName] = useState('');
   const [channelDescription, setChannelDescription] = useState('');
+  const [isChannelPublic, setIsChannelPublic] = useState(true);
+  
+  // Префиксы
+  const [isPrefixOpen, setIsPrefixOpen] = useState(false);
+  const [prefixName, setPrefixName] = useState('');
+  const [prefixColor, setPrefixColor] = useState('#3b82f6');
+  const [prefixEmoji, setPrefixEmoji] = useState('');
+  const [assignPrefixUserId, setAssignPrefixUserId] = useState<number | null>(null);
+  const [selectedPrefixId, setSelectedPrefixId] = useState<number | null>(null);
 
   // Загрузка данных из localStorage
   useEffect(() => {
@@ -90,6 +116,7 @@ const Index = () => {
     const savedChats = localStorage.getItem('himoChats');
     const savedMessages = localStorage.getItem('himoMessages');
     const savedReports = localStorage.getItem('himoReports');
+    const savedPrefixes = localStorage.getItem('himoPrefixes');
     
     if (savedUsers) {
       setUsers(JSON.parse(savedUsers));
@@ -120,6 +147,18 @@ const Index = () => {
     if (savedReports) {
       setReports(JSON.parse(savedReports));
     }
+
+    if (savedPrefixes) {
+      setPrefixes(JSON.parse(savedPrefixes));
+    } else {
+      const defaultPrefixes: Prefix[] = [
+        { id: 1, name: 'VIP', color: '#fbbf24', emoji: '👑' },
+        { id: 2, name: 'Модератор', color: '#10b981', emoji: '🛡️' },
+        { id: 3, name: 'Проверенный', color: '#3b82f6', emoji: '✅' }
+      ];
+      setPrefixes(defaultPrefixes);
+      localStorage.setItem('himoPrefixes', JSON.stringify(defaultPrefixes));
+    }
   }, []);
 
   // Сохранение данных в localStorage
@@ -146,6 +185,12 @@ const Index = () => {
       localStorage.setItem('himoReports', JSON.stringify(reports));
     }
   }, [reports]);
+
+  useEffect(() => {
+    if (prefixes.length > 0) {
+      localStorage.setItem('himoPrefixes', JSON.stringify(prefixes));
+    }
+  }, [prefixes]);
 
   const generateUniqueId = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -204,6 +249,7 @@ const Index = () => {
     setMessage('');
     setFriendId('');
     setActiveTab('chats');
+    setSearchQuery('');
   };
 
   const handleAddFriend = () => {
@@ -297,7 +343,6 @@ const Index = () => {
   const handleStartPrivateChat = (friendId: number) => {
     const friend = users.find(u => u.id === friendId);
     if (friend && currentUser) {
-      // Проверяем, существует ли уже приватный чат
       const existingChat = chats.find(chat => 
         chat.type === 'private' && 
         chat.participants?.includes(currentUser.id) && 
@@ -307,7 +352,6 @@ const Index = () => {
       if (existingChat) {
         setSelectedChat(existingChat);
       } else {
-        // Создаем новый приватный чат
         const newChat: Chat = {
           id: Math.max(...chats.map(c => c.id), 0) + 1,
           name: friend.username,
@@ -353,13 +397,62 @@ const Index = () => {
         timestamp: new Date().toLocaleTimeString().slice(0, 5),
         unread: 0,
         creator: currentUser.id,
-        participants: [currentUser.id]
+        participants: [currentUser.id],
+        description: channelDescription,
+        public: isChannelPublic
       };
       
       setChats([...chats, newChannel]);
       setIsChannelOpen(false);
       setChannelName('');
       setChannelDescription('');
+      setIsChannelPublic(true);
+    }
+  };
+
+  const handleJoinChannel = (channelId: number) => {
+    if (currentUser) {
+      setChats(chats.map(chat => {
+        if (chat.id === channelId && chat.type === 'channel') {
+          return {
+            ...chat,
+            participants: [...(chat.participants || []), currentUser.id]
+          };
+        }
+        return chat;
+      }));
+    }
+  };
+
+  const handleCreatePrefix = () => {
+    if (prefixName) {
+      const newPrefix: Prefix = {
+        id: Math.max(...prefixes.map(p => p.id), 0) + 1,
+        name: prefixName,
+        color: prefixColor,
+        emoji: prefixEmoji
+      };
+      
+      setPrefixes([...prefixes, newPrefix]);
+      setIsPrefixOpen(false);
+      setPrefixName('');
+      setPrefixColor('#3b82f6');
+      setPrefixEmoji('');
+    }
+  };
+
+  const handleAssignPrefix = () => {
+    if (assignPrefixUserId && selectedPrefixId) {
+      const prefix = prefixes.find(p => p.id === selectedPrefixId);
+      if (prefix) {
+        setUsers(users.map(user => 
+          user.id === assignPrefixUserId 
+            ? { ...user, prefix: prefix.name }
+            : user
+        ));
+        setAssignPrefixUserId(null);
+        setSelectedPrefixId(null);
+      }
     }
   };
 
@@ -368,6 +461,28 @@ const Index = () => {
       report.id === reportId ? { ...report, status: 'resolved' } : report
     ));
   };
+
+  const handleViewProfile = (user: User) => {
+    setViewingUser(user);
+    setViewProfileOpen(true);
+  };
+
+  // Фильтрация чатов и каналов по поисковому запросу
+  const filteredChats = chats.filter(chat => {
+    if (activeTab === 'chats') {
+      return (chat.participants?.includes(currentUser?.id || 0) || chat.type === 'channel') &&
+             chat.name.toLowerCase().includes(searchQuery.toLowerCase());
+    }
+    return chat.name.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
+  // Публичные каналы для поиска
+  const publicChannels = chats.filter(chat => 
+    chat.type === 'channel' && 
+    chat.public && 
+    !chat.participants?.includes(currentUser?.id || 0) &&
+    chat.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   // Открытие профиля при авторизации
   useEffect(() => {
@@ -425,6 +540,7 @@ const Index = () => {
   }
 
   const chatMessages = messages.filter(msg => msg.chatId === selectedChat?.id);
+  const userPrefix = currentUser?.prefix ? prefixes.find(p => p.name === currentUser.prefix) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -449,6 +565,15 @@ const Index = () => {
                     </Avatar>
                     <div className="text-right">
                       <div className="flex items-center gap-2">
+                        {userPrefix && (
+                          <Badge 
+                            variant="secondary" 
+                            className="text-xs"
+                            style={{ backgroundColor: userPrefix.color, color: 'white' }}
+                          >
+                            {userPrefix.emoji} {userPrefix.name}
+                          </Badge>
+                        )}
                         <span className="text-sm font-medium">{currentUser?.username}</span>
                         {currentUser?.verified && (
                           <Icon name="BadgeCheck" className="w-4 h-4 text-blue-500" />
@@ -528,12 +653,14 @@ const Index = () => {
                 <div className="p-2">
                   <div className="relative mb-4">
                     <Icon name="Search" className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input placeholder="Поиск чатов..." className="pl-10" />
+                    <Input 
+                      placeholder="Поиск чатов..." 
+                      className="pl-10"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
                   </div>
-                  {chats.filter(chat => 
-                    chat.participants?.includes(currentUser?.id || 0) || 
-                    chat.type === 'channel'
-                  ).map((chat) => (
+                  {filteredChats.map((chat) => (
                     <div
                       key={chat.id}
                       className={`p-3 rounded-lg cursor-pointer transition-colors mb-2 ${
@@ -564,11 +691,49 @@ const Index = () => {
                       </div>
                     </div>
                   ))}
-                  {chats.filter(chat => chat.participants?.includes(currentUser?.id || 0) || chat.type === 'channel').length === 0 && (
+
+                  {/* Публичные каналы в поиске */}
+                  {searchQuery && publicChannels.length > 0 && (
+                    <>
+                      <div className="px-3 py-2 text-xs font-medium text-muted-foreground">
+                        Публичные каналы
+                      </div>
+                      {publicChannels.map((channel) => (
+                        <div
+                          key={`public-${channel.id}`}
+                          className="p-3 rounded-lg cursor-pointer transition-colors mb-2 hover:bg-secondary"
+                          onClick={() => handleJoinChannel(channel.id)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Avatar>
+                              <AvatarFallback className="bg-muted">
+                                <Icon name="Hash" className="w-4 h-4" />
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium truncate">{channel.name}</span>
+                                <Badge variant="outline" className="text-xs">Публичный</Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground truncate">
+                                {channel.description || 'Нажмите, чтобы присоединиться'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {filteredChats.length === 0 && publicChannels.length === 0 && (
                     <div className="text-center text-muted-foreground py-8">
                       <Icon name="MessageSquare" className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p>У вас пока нет чатов</p>
-                      <p className="text-xs">Добавьте друзей или создайте канал</p>
+                      <p>
+                        {searchQuery ? 'Ничего не найдено' : 'У вас пока нет чатов'}
+                      </p>
+                      <p className="text-xs">
+                        {searchQuery ? 'Попробуйте изменить запрос' : 'Добавьте друзей или создайте канал'}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -596,15 +761,28 @@ const Index = () => {
                   {currentUser?.friends.map(friendId => {
                     const friend = users.find(u => u.id === friendId);
                     if (!friend) return null;
+                    const friendPrefix = friend.prefix ? prefixes.find(p => p.name === friend.prefix) : null;
                     return (
                       <div key={friend.id} className="flex items-center gap-3 p-3 rounded-lg border mb-2">
-                        <Avatar className="w-8 h-8">
+                        <Avatar 
+                          className="w-8 h-8 cursor-pointer" 
+                          onClick={() => handleViewProfile(friend)}
+                        >
                           <AvatarFallback className="bg-primary text-white">
                             {friend.username.charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
+                            {friendPrefix && (
+                              <Badge 
+                                variant="secondary" 
+                                className="text-xs"
+                                style={{ backgroundColor: friendPrefix.color, color: 'white' }}
+                              >
+                                {friendPrefix.emoji} {friendPrefix.name}
+                              </Badge>
+                            )}
                             <span className="font-medium text-sm">{friend.username}</span>
                             {friend.verified && (
                               <Icon name="BadgeCheck" className="w-3 h-3 text-blue-500" />
@@ -664,6 +842,16 @@ const Index = () => {
                       Создать канал
                     </Button>
                   </div>
+                  <div className="relative mb-4">
+                    <Icon name="Search" className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input 
+                      placeholder="Поиск каналов..." 
+                      className="pl-10"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+                  
                   <h3 className="font-medium mb-4">Мои каналы</h3>
                   {chats.filter(chat => chat.type === 'channel' && chat.creator === currentUser?.id).map((channel) => (
                     <div key={channel.id} className="p-3 rounded-lg border mb-2">
@@ -674,12 +862,60 @@ const Index = () => {
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex-1">
-                          <div className="font-medium text-sm">{channel.name}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{channel.name}</span>
+                            {channel.public && (
+                              <Badge variant="outline" className="text-xs">Публичный</Badge>
+                            )}
+                          </div>
                           <div className="text-xs text-muted-foreground">Создано вами</div>
                         </div>
                       </div>
                     </div>
                   ))}
+                  
+                  {searchQuery && (
+                    <>
+                      <h3 className="font-medium mb-4 mt-6">Найденные каналы</h3>
+                      {chats.filter(chat => 
+                        chat.type === 'channel' && 
+                        chat.public && 
+                        chat.name.toLowerCase().includes(searchQuery.toLowerCase())
+                      ).map((channel) => (
+                        <div
+                          key={channel.id}
+                          className="p-3 rounded-lg border mb-2 cursor-pointer hover:bg-secondary"
+                          onClick={() => {
+                            if (!channel.participants?.includes(currentUser?.id || 0)) {
+                              handleJoinChannel(channel.id);
+                            } else {
+                              setSelectedChat(channel);
+                              setActiveTab('chats');
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Avatar className="w-8 h-8">
+                              <AvatarFallback className="bg-muted">
+                                <Icon name="Hash" className="w-4 h-4" />
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm">{channel.name}</span>
+                                <Badge variant="outline" className="text-xs">
+                                  {channel.participants?.includes(currentUser?.id || 0) ? 'Участник' : 'Присоединиться'}
+                                </Badge>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {channel.description || 'Нет описания'}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
               </ScrollArea>
             </TabsContent>
@@ -688,85 +924,142 @@ const Index = () => {
               <TabsContent value="admin" className="flex-1 m-0">
                 <ScrollArea className="h-full">
                   <div className="p-4">
-                    <h3 className="font-medium mb-4">Управление пользователями ({users.length})</h3>
-                    {users.map((user) => (
-                      <div key={user.id} className="flex items-center justify-between p-3 rounded-lg border mb-2">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-8 h-8">
-                            <AvatarFallback className={
-                              user.status === 'banned' ? 'bg-destructive text-destructive-foreground' :
-                              user.role === 'admin' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                            }>
-                              {user.username.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-sm">{user.username}</span>
-                              {user.verified && (
-                                <Icon name="BadgeCheck" className="w-3 h-3 text-blue-500" />
-                              )}
-                              {user.role === 'admin' && (
-                                <Badge variant="secondary" className="text-xs">Admin</Badge>
-                              )}
-                            </div>
-                            <div className="text-xs text-muted-foreground">ID: {user.uniqueId}</div>
-                            <div className="text-xs text-muted-foreground">Друзей: {user.friends?.length || 0}</div>
-                            <span className={`text-xs ${
-                              user.status === 'online' ? 'text-green-500' :
-                              user.status === 'banned' ? 'text-destructive' : 'text-muted-foreground'
-                            }`}>
-                              {user.status === 'online' ? 'В сети' :
-                               user.status === 'banned' ? 'Заблокирован' : 'Не в сети'}
-                            </span>
-                          </div>
-                        </div>
-                        {user.username !== currentUser?.username && (
-                          <div className="flex gap-1">
-                            <Button
-                              size="sm"
-                              variant={user.verified ? "default" : "outline"}
-                              onClick={() => handleVerifyUser(user.id)}
+                    <div className="mb-6">
+                      <h3 className="font-medium mb-4">Управление префиксами</h3>
+                      <Button onClick={() => setIsPrefixOpen(true)} className="w-full mb-4">
+                        <Icon name="Plus" className="w-4 h-4 mr-2" />
+                        Создать префикс
+                      </Button>
+                      
+                      <div className="space-y-2 mb-4">
+                        {prefixes.map((prefix) => (
+                          <div key={prefix.id} className="flex items-center justify-between p-2 rounded border">
+                            <Badge 
+                              variant="secondary"
+                              style={{ backgroundColor: prefix.color, color: 'white' }}
                             >
-                              <Icon name="BadgeCheck" className="w-3 h-3" />
-                            </Button>
-                            {user.status !== 'banned' ? (
+                              {prefix.emoji} {prefix.name}
+                            </Badge>
+                            <div className="flex gap-2">
+                              <Select onValueChange={(value) => setAssignPrefixUserId(Number(value))}>
+                                <SelectTrigger className="w-32">
+                                  <SelectValue placeholder="Выбрать" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {users.filter(u => u.role !== 'admin').map((user) => (
+                                    <SelectItem key={user.id} value={user.id.toString()}>
+                                      {user.username}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedPrefixId(prefix.id);
+                                  handleAssignPrefix();
+                                }}
+                                disabled={!assignPrefixUserId}
+                              >
+                                Назначить
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <h3 className="font-medium mb-4">Управление пользователями ({users.length})</h3>
+                    {users.map((user) => {
+                      const userPrefix = user.prefix ? prefixes.find(p => p.name === user.prefix) : null;
+                      return (
+                        <div key={user.id} className="flex items-center justify-between p-3 rounded-lg border mb-2">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="w-8 h-8">
+                              <AvatarFallback className={
+                                user.status === 'banned' ? 'bg-destructive text-destructive-foreground' :
+                                user.role === 'admin' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                              }>
+                                {user.username.charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                {userPrefix && (
+                                  <Badge 
+                                    variant="secondary" 
+                                    className="text-xs"
+                                    style={{ backgroundColor: userPrefix.color, color: 'white' }}
+                                  >
+                                    {userPrefix.emoji} {userPrefix.name}
+                                  </Badge>
+                                )}
+                                <span className="font-medium text-sm">{user.username}</span>
+                                {user.verified && (
+                                  <Icon name="BadgeCheck" className="w-3 h-3 text-blue-500" />
+                                )}
+                                {user.role === 'admin' && (
+                                  <Badge variant="secondary" className="text-xs">Admin</Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground">ID: {user.uniqueId}</div>
+                              <div className="text-xs text-muted-foreground">Друзей: {user.friends?.length || 0}</div>
+                              <span className={`text-xs ${
+                                user.status === 'online' ? 'text-green-500' :
+                                user.status === 'banned' ? 'text-destructive' : 'text-muted-foreground'
+                              }`}>
+                                {user.status === 'online' ? 'В сети' :
+                                 user.status === 'banned' ? 'Заблокирован' : 'Не в сети'}
+                              </span>
+                            </div>
+                          </div>
+                          {user.username !== currentUser?.username && (
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant={user.verified ? "default" : "outline"}
+                                onClick={() => handleVerifyUser(user.id)}
+                              >
+                                <Icon name="BadgeCheck" className="w-3 h-3" />
+                              </Button>
+                              {user.status !== 'banned' ? (
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleUserAction(user.id, 'ban')}
+                                >
+                                  <Icon name="Ban" className="w-3 h-3" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleUserAction(user.id, 'unban')}
+                                >
+                                  <Icon name="UserCheck" className="w-3 h-3" />
+                                </Button>
+                              )}
+                              {user.role !== 'admin' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleUserAction(user.id, 'makeAdmin')}
+                                >
+                                  <Icon name="Crown" className="w-3 h-3" />
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => handleUserAction(user.id, 'ban')}
+                                onClick={() => handleDeleteUser(user.id)}
                               >
-                                <Icon name="Ban" className="w-3 h-3" />
+                                <Icon name="Trash2" className="w-3 h-3" />
                               </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleUserAction(user.id, 'unban')}
-                              >
-                                <Icon name="UserCheck" className="w-3 h-3" />
-                              </Button>
-                            )}
-                            {user.role !== 'admin' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleUserAction(user.id, 'makeAdmin')}
-                              >
-                                <Icon name="Crown" className="w-3 h-3" />
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => handleDeleteUser(user.id)}
-                            >
-                              <Icon name="Trash2" className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                     
                     <h3 className="font-medium mb-4 mt-6">Репорты ({reports.filter(r => r.status === 'pending').length})</h3>
                     {reports.filter(r => r.status === 'pending').map((report) => {
@@ -896,6 +1189,73 @@ const Index = () => {
 
       {/* Модальные окна */}
       
+      {/* Просмотр профиля */}
+      <Dialog open={viewProfileOpen} onOpenChange={setViewProfileOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Профиль пользователя</DialogTitle>
+          </DialogHeader>
+          {viewingUser && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Avatar className="w-16 h-16">
+                  <AvatarFallback className="bg-primary text-white text-xl">
+                    {viewingUser.username.charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <div className="flex items-center gap-2">
+                    {viewingUser.prefix && (
+                      <Badge 
+                        variant="secondary"
+                        style={{ backgroundColor: prefixes.find(p => p.name === viewingUser.prefix)?.color, color: 'white' }}
+                      >
+                        {prefixes.find(p => p.name === viewingUser.prefix)?.emoji} {viewingUser.prefix}
+                      </Badge>
+                    )}
+                    <h3 className="text-lg font-semibold">{viewingUser.username}</h3>
+                    {viewingUser.verified && (
+                      <Icon name="BadgeCheck" className="w-5 h-5 text-blue-500" />
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground">ID: {viewingUser.uniqueId}</p>
+                  <div className={`text-sm ${
+                    viewingUser.status === 'online' ? 'text-green-500' :
+                    viewingUser.status === 'banned' ? 'text-destructive' : 'text-muted-foreground'
+                  }`}>
+                    {viewingUser.status === 'online' ? 'В сети' :
+                     viewingUser.status === 'banned' ? 'Заблокирован' : 'Не в сети'}
+                  </div>
+                </div>
+              </div>
+              {viewingUser.bio && (
+                <div>
+                  <h4 className="font-medium mb-2">О себе</h4>
+                  <p className="text-sm text-muted-foreground">{viewingUser.bio}</p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button onClick={() => handleStartPrivateChat(viewingUser.id)}>
+                  <Icon name="MessageSquare" className="w-4 h-4 mr-2" />
+                  Написать
+                </Button>
+                <Button 
+                  variant="outline"
+                  onClick={() => {
+                    setReportUserId(viewingUser.id);
+                    setViewProfileOpen(false);
+                    setIsReportOpen(true);
+                  }}
+                >
+                  <Icon name="Flag" className="w-4 h-4 mr-2" />
+                  Пожаловаться
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Репорт пользователя */}
       <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>
         <DialogContent>
@@ -949,11 +1309,67 @@ const Index = () => {
                 placeholder="Описание канала (опционально)"
               />
             </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="isPublic"
+                checked={isChannelPublic}
+                onChange={(e) => setIsChannelPublic(e.target.checked)}
+              />
+              <Label htmlFor="isPublic">Публичный канал</Label>
+            </div>
             <div className="flex gap-2">
               <Button onClick={handleCreateChannel} disabled={!channelName}>
                 Создать канал
               </Button>
               <Button variant="outline" onClick={() => setIsChannelOpen(false)}>
+                Отмена
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Создание префикса */}
+      <Dialog open={isPrefixOpen} onOpenChange={setIsPrefixOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Создать префикс</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="prefixName">Название префикса</Label>
+              <Input
+                id="prefixName"
+                value={prefixName}
+                onChange={(e) => setPrefixName(e.target.value)}
+                placeholder="VIP, Модератор, Проверенный..."
+              />
+            </div>
+            <div>
+              <Label htmlFor="prefixColor">Цвет</Label>
+              <Input
+                id="prefixColor"
+                type="color"
+                value={prefixColor}
+                onChange={(e) => setPrefixColor(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="prefixEmoji">Эмодзи</Label>
+              <Input
+                id="prefixEmoji"
+                value={prefixEmoji}
+                onChange={(e) => setPrefixEmoji(e.target.value)}
+                placeholder="👑, 🛡️, ✅..."
+                maxLength={2}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleCreatePrefix} disabled={!prefixName}>
+                Создать префикс
+              </Button>
+              <Button variant="outline" onClick={() => setIsPrefixOpen(false)}>
                 Отмена
               </Button>
             </div>
