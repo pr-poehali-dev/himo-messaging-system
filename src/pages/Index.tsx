@@ -12,9 +12,11 @@ import Icon from '@/components/ui/icon';
 interface User {
   id: number;
   username: string;
+  uniqueId: string;
   status: 'online' | 'offline' | 'banned';
   role: 'user' | 'admin';
   lastSeen?: string;
+  friends: number[];
 }
 
 interface Chat {
@@ -40,13 +42,13 @@ const Index = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [friendId, setFriendId] = useState('');
   const [activeTab, setActiveTab] = useState('chats');
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [message, setMessage] = useState('');
   const [users, setUsers] = useState<User[]>([
-    { id: 1, username: 'Himo', status: 'online', role: 'admin' },
-    { id: 2, username: 'user1', status: 'online', role: 'user' },
-    { id: 3, username: 'user2', status: 'offline', role: 'user' },
+    { id: 1, username: 'Himo', uniqueId: 'HIMO001', status: 'online', role: 'admin', friends: [] },
   ]);
   
   const [chats] = useState<Chat[]>([
@@ -60,25 +62,70 @@ const Index = () => {
     { id: 2, sender: 'AutoBot', content: 'Добро пожаловать в чат! Я могу помочь с автоматизацией задач.', timestamp: '14:31', type: 'bot' },
   ]);
 
+  const generateUniqueId = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 7; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
+
   const handleLogin = () => {
     if (username === 'Himo' && password === '12345678') {
       const admin = users.find(u => u.username === 'Himo');
       setCurrentUser(admin || null);
       setIsAuthenticated(true);
-    } else if (username) {
-      let user = users.find(u => u.username === username);
-      if (!user) {
+    } else if (username && password) {
+      const user = users.find(u => u.username === username);
+      if (user) {
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+      }
+    }
+  };
+
+  const handleRegister = () => {
+    if (username && password) {
+      const existingUser = users.find(u => u.username === username);
+      if (!existingUser) {
         const newUser: User = {
           id: users.length + 1,
           username,
+          uniqueId: generateUniqueId(),
           status: 'online',
-          role: 'user'
+          role: 'user',
+          friends: []
         };
         setUsers([...users, newUser]);
-        user = newUser;
+        setCurrentUser(newUser);
+        setIsAuthenticated(true);
       }
-      setCurrentUser(user);
-      setIsAuthenticated(true);
+    }
+  };
+
+  const handleAddFriend = () => {
+    if (friendId && currentUser) {
+      const friendUser = users.find(u => u.uniqueId === friendId);
+      if (friendUser && friendUser.id !== currentUser.id && !currentUser.friends.includes(friendUser.id)) {
+        setUsers(users.map(user => {
+          if (user.id === currentUser.id) {
+            return { ...user, friends: [...user.friends, friendUser.id] };
+          }
+          if (user.id === friendUser.id) {
+            return { ...user, friends: [...user.friends, currentUser.id] };
+          }
+          return user;
+        }));
+        setCurrentUser({ ...currentUser, friends: [...currentUser.friends, friendUser.id] });
+        setFriendId('');
+      }
+    }
+  };
+
+  const handleDeleteUser = (userId: number) => {
+    if (currentUser?.role === 'admin' && userId !== 1) {
+      setUsers(users.filter(user => user.id !== userId));
     }
   };
 
@@ -137,8 +184,8 @@ const Index = () => {
             <div className="mx-auto w-16 h-16 bg-primary rounded-full flex items-center justify-center mb-4">
               <Icon name="MessageCircle" className="w-8 h-8 text-white" />
             </div>
-            <CardTitle className="text-2xl">Telegram Clone</CardTitle>
-            <p className="text-muted-foreground">Войдите в систему или зарегистрируйтесь</p>
+            <CardTitle className="text-2xl">Himo</CardTitle>
+            <p className="text-muted-foreground">{isRegistering ? 'Создайте новый аккаунт' : 'Войдите в систему'}</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -151,13 +198,24 @@ const Index = () => {
             <div>
               <Input
                 type="password"
-                placeholder="Пароль (для админа: 12345678)"
+                placeholder={isRegistering ? 'Создайте пароль' : 'Пароль (для админа: 12345678)'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
-            <Button onClick={handleLogin} className="w-full" disabled={!username}>
-              Войти
+            <Button 
+              onClick={isRegistering ? handleRegister : handleLogin} 
+              className="w-full" 
+              disabled={!username || !password}
+            >
+              {isRegistering ? 'Зарегистрироваться' : 'Войти'}
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsRegistering(!isRegistering)} 
+              className="w-full"
+            >
+              {isRegistering ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Регистрация'}
             </Button>
           </CardContent>
         </Card>
@@ -174,7 +232,7 @@ const Index = () => {
             <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
               <Icon name="MessageCircle" className="w-4 h-4 text-white" />
             </div>
-            <h1 className="text-xl font-semibold">Telegram Clone</h1>
+            <h1 className="text-xl font-semibold">Himo</h1>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
@@ -183,10 +241,15 @@ const Index = () => {
                   {currentUser?.username.charAt(0).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-sm font-medium">{currentUser?.username}</span>
-              {currentUser?.role === 'admin' && (
-                <Badge variant="secondary" className="text-xs">Admin</Badge>
-              )}
+              <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{currentUser?.username}</span>
+                  {currentUser?.role === 'admin' && (
+                    <Badge variant="secondary" className="text-xs">Admin</Badge>
+                  )}
+                </div>
+                <span className="text-xs text-muted-foreground">ID: {currentUser?.uniqueId}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -196,10 +259,14 @@ const Index = () => {
         {/* Sidebar */}
         <div className="w-80 border-r bg-card flex flex-col">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
-            <TabsList className="grid w-full grid-cols-4 m-2">
+            <TabsList className="grid w-full grid-cols-5 m-2">
               <TabsTrigger value="chats" className="text-xs">
                 <Icon name="MessageSquare" className="w-4 h-4 mr-1" />
                 Чаты
+              </TabsTrigger>
+              <TabsTrigger value="friends" className="text-xs">
+                <Icon name="UserPlus" className="w-4 h-4 mr-1" />
+                Друзья
               </TabsTrigger>
               <TabsTrigger value="groups" className="text-xs">
                 <Icon name="Users" className="w-4 h-4 mr-1" />
@@ -259,6 +326,59 @@ const Index = () => {
               </ScrollArea>
             </TabsContent>
 
+            <TabsContent value="friends" className="flex-1 m-0">
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  <div className="mb-4">
+                    <h3 className="font-medium mb-2">Добавить друга</h3>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Введите ID пользователя"
+                        value={friendId}
+                        onChange={(e) => setFriendId(e.target.value.toUpperCase())}
+                        className="flex-1"
+                      />
+                      <Button onClick={handleAddFriend} disabled={!friendId}>
+                        <Icon name="UserPlus" className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <h3 className="font-medium mb-4">Мои друзья ({currentUser?.friends.length || 0})</h3>
+                  {currentUser?.friends.map(friendId => {
+                    const friend = users.find(u => u.id === friendId);
+                    if (!friend) return null;
+                    return (
+                      <div key={friend.id} className="flex items-center gap-3 p-3 rounded-lg border mb-2">
+                        <Avatar className="w-8 h-8">
+                          <AvatarFallback className="bg-primary text-white">
+                            {friend.username.charAt(0).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{friend.username}</div>
+                          <div className="text-xs text-muted-foreground">ID: {friend.uniqueId}</div>
+                          <div className={`text-xs ${
+                            friend.status === 'online' ? 'text-green-500' :
+                            friend.status === 'banned' ? 'text-destructive' : 'text-muted-foreground'
+                          }`}>
+                            {friend.status === 'online' ? 'В сети' :
+                             friend.status === 'banned' ? 'Заблокирован' : 'Не в сети'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {currentUser?.friends.length === 0 && (
+                    <div className="text-center text-muted-foreground py-8">
+                      <Icon name="UserPlus" className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>У вас пока нет друзей</p>
+                      <p className="text-xs">Добавьте друзей по их ID</p>
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
             <TabsContent value="groups" className="flex-1 m-0">
               <div className="p-4 text-center text-muted-foreground">
                 <Icon name="Users" className="w-12 h-12 mx-auto mb-2 opacity-50" />
@@ -277,7 +397,7 @@ const Index = () => {
               <TabsContent value="admin" className="flex-1 m-0">
                 <ScrollArea className="h-full">
                   <div className="p-4">
-                    <h3 className="font-medium mb-4">Управление пользователями</h3>
+                    <h3 className="font-medium mb-4">Управление пользователями ({users.length})</h3>
                     {users.map((user) => (
                       <div key={user.id} className="flex items-center justify-between p-3 rounded-lg border mb-2">
                         <div className="flex items-center gap-3">
@@ -296,6 +416,8 @@ const Index = () => {
                                 <Badge variant="secondary" className="text-xs">Admin</Badge>
                               )}
                             </div>
+                            <div className="text-xs text-muted-foreground">ID: {user.uniqueId}</div>
+                            <div className="text-xs text-muted-foreground">Друзей: {user.friends?.length || 0}</div>
                             <span className={`text-xs ${
                               user.status === 'online' ? 'text-green-500' :
                               user.status === 'banned' ? 'text-destructive' : 'text-muted-foreground'
@@ -333,6 +455,13 @@ const Index = () => {
                                 <Icon name="Crown" className="w-3 h-3" />
                               </Button>
                             )}
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDeleteUser(user.id)}
+                            >
+                              <Icon name="Trash2" className="w-3 h-3" />
+                            </Button>
                           </div>
                         )}
                       </div>
