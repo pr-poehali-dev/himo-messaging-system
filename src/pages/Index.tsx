@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
 
 interface User {
@@ -17,6 +19,9 @@ interface User {
   role: 'user' | 'admin';
   lastSeen?: string;
   friends: number[];
+  bio?: string;
+  avatar?: string;
+  verified?: boolean;
 }
 
 interface Chat {
@@ -27,6 +32,8 @@ interface Chat {
   timestamp: string;
   unread: number;
   avatar?: string;
+  participants?: number[];
+  creator?: number;
 }
 
 interface Message {
@@ -35,6 +42,16 @@ interface Message {
   content: string;
   timestamp: string;
   type: 'text' | 'bot';
+  chatId: number;
+}
+
+interface Report {
+  id: number;
+  reporterId: number;
+  reportedUserId: number;
+  reason: string;
+  timestamp: string;
+  status: 'pending' | 'resolved';
 }
 
 const Index = () => {
@@ -48,45 +65,87 @@ const Index = () => {
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [message, setMessage] = useState('');
   const [users, setUsers] = useState<User[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
   
-  const [chats] = useState<Chat[]>([
-    { id: 1, name: 'Общий чат', type: 'group', lastMessage: 'Привет всем!', timestamp: '14:30', unread: 2 },
-    { id: 2, name: 'Техподдержка', type: 'channel', lastMessage: 'Бот: Как дела?', timestamp: '14:25', unread: 0 },
-    { id: 3, name: 'Разработка', type: 'group', lastMessage: 'Обсуждаем новые фичи', timestamp: '13:45', unread: 5 },
-  ]);
+  // Настройки профиля
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profileBio, setProfileBio] = useState('');
+  const [profileUsername, setProfileUsername] = useState('');
   
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 1, sender: 'user1', content: 'Привет всем!', timestamp: '14:30', type: 'text' },
-    { id: 2, sender: 'AutoBot', content: 'Добро пожаловать в чат! Я могу помочь с автоматизацией задач.', timestamp: '14:31', type: 'bot' },
-  ]);
+  // Репорт пользователя
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [reportUserId, setReportUserId] = useState<number | null>(null);
+  const [reportReason, setReportReason] = useState('');
+  
+  // Создание канала
+  const [isChannelOpen, setIsChannelOpen] = useState(false);
+  const [channelName, setChannelName] = useState('');
+  const [channelDescription, setChannelDescription] = useState('');
 
-  // Загрузка пользователей из localStorage
+  // Загрузка данных из localStorage
   useEffect(() => {
     const savedUsers = localStorage.getItem('himoUsers');
+    const savedChats = localStorage.getItem('himoChats');
+    const savedMessages = localStorage.getItem('himoMessages');
+    const savedReports = localStorage.getItem('himoReports');
+    
     if (savedUsers) {
       setUsers(JSON.parse(savedUsers));
     } else {
-      // Создаем админа по умолчанию если нет сохраненных пользователей
       const defaultAdmin: User = {
         id: 1, 
         username: 'Himo', 
         uniqueId: 'HIMO001', 
         status: 'online', 
         role: 'admin', 
-        friends: []
+        friends: [],
+        bio: 'Создатель Himo',
+        verified: true
       };
       const initialUsers = [defaultAdmin];
       setUsers(initialUsers);
       localStorage.setItem('himoUsers', JSON.stringify(initialUsers));
     }
+
+    if (savedChats) {
+      setChats(JSON.parse(savedChats));
+    }
+
+    if (savedMessages) {
+      setMessages(JSON.parse(savedMessages));
+    }
+
+    if (savedReports) {
+      setReports(JSON.parse(savedReports));
+    }
   }, []);
 
-  // Сохранение пользователей в localStorage при изменении
+  // Сохранение данных в localStorage
   useEffect(() => {
     if (users.length > 0) {
       localStorage.setItem('himoUsers', JSON.stringify(users));
     }
   }, [users]);
+
+  useEffect(() => {
+    if (chats.length > 0) {
+      localStorage.setItem('himoChats', JSON.stringify(chats));
+    }
+  }, [chats]);
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem('himoMessages', JSON.stringify(messages));
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (reports.length > 0) {
+      localStorage.setItem('himoReports', JSON.stringify(reports));
+    }
+  }, [reports]);
 
   const generateUniqueId = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -101,11 +160,9 @@ const Index = () => {
     if (username && password) {
       const user = users.find(u => u.username === username);
       if (user) {
-        // Для админа проверяем пароль
         if (user.role === 'admin' && password !== '12345678') {
           return;
         }
-        // Для обычных пользователей можно добавить проверку сохраненного пароля
         setCurrentUser(user);
         setIsAuthenticated(true);
         setUsername('');
@@ -124,7 +181,9 @@ const Index = () => {
           uniqueId: generateUniqueId(),
           status: 'online',
           role: 'user',
-          friends: []
+          friends: [],
+          bio: '',
+          verified: false
         };
         const updatedUsers = [...users, newUser];
         setUsers(updatedUsers);
@@ -173,29 +232,25 @@ const Index = () => {
   };
 
   const handleSendMessage = () => {
-    if (message.trim() && selectedChat) {
+    if (message.trim() && selectedChat && currentUser) {
       const newMessage: Message = {
-        id: messages.length + 1,
-        sender: currentUser?.username || 'Аноним',
+        id: Math.max(...messages.map(m => m.id), 0) + 1,
+        sender: currentUser.username,
         content: message,
         timestamp: new Date().toLocaleTimeString().slice(0, 5),
-        type: 'text'
+        type: 'text',
+        chatId: selectedChat.id
       };
       setMessages([...messages, newMessage]);
-      setMessage('');
       
-      if (message.includes('/bot') || message.includes('бот')) {
-        setTimeout(() => {
-          const botResponse: Message = {
-            id: messages.length + 2,
-            sender: 'AutoBot',
-            content: 'Обрабатываю вашу команду автоматизации...',
-            timestamp: new Date().toLocaleTimeString().slice(0, 5),
-            type: 'bot'
-          };
-          setMessages(prev => [...prev, botResponse]);
-        }, 1000);
-      }
+      // Обновляем последнее сообщение в чате
+      setChats(chats.map(chat => 
+        chat.id === selectedChat.id 
+          ? { ...chat, lastMessage: message, timestamp: newMessage.timestamp }
+          : chat
+      ));
+      
+      setMessage('');
     }
   };
 
@@ -218,6 +273,109 @@ const Index = () => {
       }));
     }
   };
+
+  const handleVerifyUser = (userId: number) => {
+    if (currentUser?.role === 'admin') {
+      setUsers(users.map(user => 
+        user.id === userId ? { ...user, verified: !user.verified } : user
+      ));
+    }
+  };
+
+  const handleUpdateProfile = () => {
+    if (currentUser && profileUsername) {
+      setUsers(users.map(user => 
+        user.id === currentUser.id 
+          ? { ...user, username: profileUsername, bio: profileBio }
+          : user
+      ));
+      setCurrentUser({ ...currentUser, username: profileUsername, bio: profileBio });
+      setIsProfileOpen(false);
+    }
+  };
+
+  const handleStartPrivateChat = (friendId: number) => {
+    const friend = users.find(u => u.id === friendId);
+    if (friend && currentUser) {
+      // Проверяем, существует ли уже приватный чат
+      const existingChat = chats.find(chat => 
+        chat.type === 'private' && 
+        chat.participants?.includes(currentUser.id) && 
+        chat.participants?.includes(friendId)
+      );
+
+      if (existingChat) {
+        setSelectedChat(existingChat);
+      } else {
+        // Создаем новый приватный чат
+        const newChat: Chat = {
+          id: Math.max(...chats.map(c => c.id), 0) + 1,
+          name: friend.username,
+          type: 'private',
+          lastMessage: 'Начните общение...',
+          timestamp: new Date().toLocaleTimeString().slice(0, 5),
+          unread: 0,
+          participants: [currentUser.id, friendId]
+        };
+        
+        setChats([...chats, newChat]);
+        setSelectedChat(newChat);
+      }
+      setActiveTab('chats');
+    }
+  };
+
+  const handleReportUser = () => {
+    if (reportUserId && reportReason && currentUser) {
+      const newReport: Report = {
+        id: Math.max(...reports.map(r => r.id), 0) + 1,
+        reporterId: currentUser.id,
+        reportedUserId: reportUserId,
+        reason: reportReason,
+        timestamp: new Date().toLocaleString(),
+        status: 'pending'
+      };
+      
+      setReports([...reports, newReport]);
+      setIsReportOpen(false);
+      setReportReason('');
+      setReportUserId(null);
+    }
+  };
+
+  const handleCreateChannel = () => {
+    if (channelName && currentUser) {
+      const newChannel: Chat = {
+        id: Math.max(...chats.map(c => c.id), 0) + 1,
+        name: channelName,
+        type: 'channel',
+        lastMessage: 'Канал создан',
+        timestamp: new Date().toLocaleTimeString().slice(0, 5),
+        unread: 0,
+        creator: currentUser.id,
+        participants: [currentUser.id]
+      };
+      
+      setChats([...chats, newChannel]);
+      setIsChannelOpen(false);
+      setChannelName('');
+      setChannelDescription('');
+    }
+  };
+
+  const handleResolveReport = (reportId: number) => {
+    setReports(reports.map(report => 
+      report.id === reportId ? { ...report, status: 'resolved' } : report
+    ));
+  };
+
+  // Открытие профиля при авторизации
+  useEffect(() => {
+    if (currentUser) {
+      setProfileUsername(currentUser.username);
+      setProfileBio(currentUser.bio || '');
+    }
+  }, [currentUser]);
 
   if (!isAuthenticated) {
     return (
@@ -266,6 +424,8 @@ const Index = () => {
     );
   }
 
+  const chatMessages = messages.filter(msg => msg.chatId === selectedChat?.id);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -279,20 +439,56 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <Avatar className="w-8 h-8">
-                <AvatarFallback className="bg-primary text-white text-sm">
-                  {currentUser?.username.charAt(0).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="text-right">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{currentUser?.username}</span>
-                  {currentUser?.role === 'admin' && (
-                    <Badge variant="secondary" className="text-xs">Admin</Badge>
-                  )}
-                </div>
-                <span className="text-xs text-muted-foreground">ID: {currentUser?.uniqueId}</span>
-              </div>
+              <Dialog open={isProfileOpen} onOpenChange={setIsProfileOpen}>
+                <DialogTrigger asChild>
+                  <div className="flex items-center gap-2 cursor-pointer">
+                    <Avatar className="w-8 h-8">
+                      <AvatarFallback className="bg-primary text-white text-sm">
+                        {currentUser?.username.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="text-right">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{currentUser?.username}</span>
+                        {currentUser?.verified && (
+                          <Icon name="BadgeCheck" className="w-4 h-4 text-blue-500" />
+                        )}
+                        {currentUser?.role === 'admin' && (
+                          <Badge variant="secondary" className="text-xs">Admin</Badge>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground">ID: {currentUser?.uniqueId}</span>
+                    </div>
+                  </div>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Настройки профиля</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="username">Имя пользователя</Label>
+                      <Input
+                        id="username"
+                        value={profileUsername}
+                        onChange={(e) => setProfileUsername(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="bio">О себе</Label>
+                      <Textarea
+                        id="bio"
+                        value={profileBio}
+                        onChange={(e) => setProfileBio(e.target.value)}
+                        placeholder="Расскажите о себе..."
+                      />
+                    </div>
+                    <Button onClick={handleUpdateProfile}>
+                      Сохранить изменения
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <Icon name="LogOut" className="w-4 h-4 mr-1" />
@@ -306,7 +502,7 @@ const Index = () => {
         {/* Sidebar */}
         <div className="w-80 border-r bg-card flex flex-col">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
-            <TabsList className="grid w-full grid-cols-5 m-2">
+            <TabsList className="grid w-full grid-cols-4 m-2">
               <TabsTrigger value="chats" className="text-xs">
                 <Icon name="MessageSquare" className="w-4 h-4 mr-1" />
                 Чаты
@@ -314,10 +510,6 @@ const Index = () => {
               <TabsTrigger value="friends" className="text-xs">
                 <Icon name="UserPlus" className="w-4 h-4 mr-1" />
                 Друзья
-              </TabsTrigger>
-              <TabsTrigger value="groups" className="text-xs">
-                <Icon name="Users" className="w-4 h-4 mr-1" />
-                Группы
               </TabsTrigger>
               <TabsTrigger value="channels" className="text-xs">
                 <Icon name="Hash" className="w-4 h-4 mr-1" />
@@ -338,7 +530,10 @@ const Index = () => {
                     <Icon name="Search" className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input placeholder="Поиск чатов..." className="pl-10" />
                   </div>
-                  {chats.map((chat) => (
+                  {chats.filter(chat => 
+                    chat.participants?.includes(currentUser?.id || 0) || 
+                    chat.type === 'channel'
+                  ).map((chat) => (
                     <div
                       key={chat.id}
                       className={`p-3 rounded-lg cursor-pointer transition-colors mb-2 ${
@@ -369,6 +564,13 @@ const Index = () => {
                       </div>
                     </div>
                   ))}
+                  {chats.filter(chat => chat.participants?.includes(currentUser?.id || 0) || chat.type === 'channel').length === 0 && (
+                    <div className="text-center text-muted-foreground py-8">
+                      <Icon name="MessageSquare" className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>У вас пока нет чатов</p>
+                      <p className="text-xs">Добавьте друзей или создайте канал</p>
+                    </div>
+                  )}
                 </div>
               </ScrollArea>
             </TabsContent>
@@ -402,7 +604,12 @@ const Index = () => {
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex-1">
-                          <div className="font-medium text-sm">{friend.username}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{friend.username}</span>
+                            {friend.verified && (
+                              <Icon name="BadgeCheck" className="w-3 h-3 text-blue-500" />
+                            )}
+                          </div>
                           <div className="text-xs text-muted-foreground">ID: {friend.uniqueId}</div>
                           <div className={`text-xs ${
                             friend.status === 'online' ? 'text-green-500' :
@@ -411,6 +618,28 @@ const Index = () => {
                             {friend.status === 'online' ? 'В сети' :
                              friend.status === 'banned' ? 'Заблокирован' : 'Не в сети'}
                           </div>
+                          {friend.bio && (
+                            <div className="text-xs text-muted-foreground mt-1">{friend.bio}</div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleStartPrivateChat(friend.id)}
+                          >
+                            <Icon name="MessageSquare" className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => {
+                              setReportUserId(friend.id);
+                              setIsReportOpen(true);
+                            }}
+                          >
+                            <Icon name="Flag" className="w-3 h-3" />
+                          </Button>
                         </div>
                       </div>
                     );
@@ -426,18 +655,33 @@ const Index = () => {
               </ScrollArea>
             </TabsContent>
 
-            <TabsContent value="groups" className="flex-1 m-0">
-              <div className="p-4 text-center text-muted-foreground">
-                <Icon name="Users" className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>Группы появятся здесь</p>
-              </div>
-            </TabsContent>
-
             <TabsContent value="channels" className="flex-1 m-0">
-              <div className="p-4 text-center text-muted-foreground">
-                <Icon name="Hash" className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>Каналы появятся здесь</p>
-              </div>
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  <div className="mb-4">
+                    <Button onClick={() => setIsChannelOpen(true)} className="w-full">
+                      <Icon name="Plus" className="w-4 h-4 mr-2" />
+                      Создать канал
+                    </Button>
+                  </div>
+                  <h3 className="font-medium mb-4">Мои каналы</h3>
+                  {chats.filter(chat => chat.type === 'channel' && chat.creator === currentUser?.id).map((channel) => (
+                    <div key={channel.id} className="p-3 rounded-lg border mb-2">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="w-8 h-8">
+                          <AvatarFallback className="bg-muted">
+                            <Icon name="Hash" className="w-4 h-4" />
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{channel.name}</div>
+                          <div className="text-xs text-muted-foreground">Создано вами</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
             </TabsContent>
 
             {currentUser?.role === 'admin' && (
@@ -459,6 +703,9 @@ const Index = () => {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-sm">{user.username}</span>
+                              {user.verified && (
+                                <Icon name="BadgeCheck" className="w-3 h-3 text-blue-500" />
+                              )}
                               {user.role === 'admin' && (
                                 <Badge variant="secondary" className="text-xs">Admin</Badge>
                               )}
@@ -476,6 +723,13 @@ const Index = () => {
                         </div>
                         {user.username !== currentUser?.username && (
                           <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant={user.verified ? "default" : "outline"}
+                              onClick={() => handleVerifyUser(user.id)}
+                            >
+                              <Icon name="BadgeCheck" className="w-3 h-3" />
+                            </Button>
                             {user.status !== 'banned' ? (
                               <Button
                                 size="sm"
@@ -513,6 +767,38 @@ const Index = () => {
                         )}
                       </div>
                     ))}
+                    
+                    <h3 className="font-medium mb-4 mt-6">Репорты ({reports.filter(r => r.status === 'pending').length})</h3>
+                    {reports.filter(r => r.status === 'pending').map((report) => {
+                      const reporter = users.find(u => u.id === report.reporterId);
+                      const reported = users.find(u => u.id === report.reportedUserId);
+                      return (
+                        <div key={report.id} className="p-3 rounded-lg border mb-2 bg-yellow-50">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="text-sm font-medium">
+                                {reporter?.username} → {reported?.username}
+                              </div>
+                              <div className="text-xs text-muted-foreground mb-2">
+                                {report.timestamp}
+                              </div>
+                              <div className="text-sm">{report.reason}</div>
+                            </div>
+                            <Button
+                              size="sm"
+                              onClick={() => handleResolveReport(report.id)}
+                            >
+                              Решено
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {reports.filter(r => r.status === 'pending').length === 0 && (
+                      <div className="text-center text-muted-foreground py-4">
+                        <p>Нет активных репортов</p>
+                      </div>
+                    )}
                   </div>
                 </ScrollArea>
               </TabsContent>
@@ -547,26 +833,36 @@ const Index = () => {
               {/* Messages */}
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4">
-                  {messages.map((msg) => (
-                    <div key={msg.id} className={`flex ${msg.type === 'bot' ? 'justify-start' : 'justify-start'}`}>
+                  {chatMessages.map((msg) => (
+                    <div key={msg.id} className={`flex ${
+                      msg.sender === currentUser?.username ? 'justify-end' : 'justify-start'
+                    }`}>
                       <div className={`max-w-[70%] rounded-lg p-3 ${
                         msg.type === 'bot' 
                           ? 'bg-secondary text-secondary-foreground' 
                           : msg.sender === currentUser?.username
-                            ? 'bg-primary text-primary-foreground ml-auto'
+                            ? 'bg-primary text-primary-foreground'
                             : 'bg-muted'
                       }`}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium">{msg.sender}</span>
-                          {msg.type === 'bot' && (
-                            <Badge variant="secondary" className="text-xs">Bot</Badge>
-                          )}
-                        </div>
+                        {msg.sender !== currentUser?.username && (
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-medium">{msg.sender}</span>
+                            {msg.type === 'bot' && (
+                              <Badge variant="secondary" className="text-xs">Bot</Badge>
+                            )}
+                          </div>
+                        )}
                         <p className="text-sm">{msg.content}</p>
                         <span className="text-xs opacity-70">{msg.timestamp}</span>
                       </div>
                     </div>
                   ))}
+                  {chatMessages.length === 0 && (
+                    <div className="text-center text-muted-foreground py-8">
+                      <Icon name="MessageSquare" className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>Начните общение</p>
+                    </div>
+                  )}
                 </div>
               </ScrollArea>
 
@@ -574,7 +870,7 @@ const Index = () => {
               <div className="border-t p-4">
                 <div className="flex gap-2">
                   <Input
-                    placeholder="Напишите сообщение... (попробуйте '/bot' для автоматизации)"
+                    placeholder="Напишите сообщение..."
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
@@ -597,6 +893,73 @@ const Index = () => {
           )}
         </div>
       </div>
+
+      {/* Модальные окна */}
+      
+      {/* Репорт пользователя */}
+      <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Пожаловаться на пользователя</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="reason">Причина жалобы</Label>
+              <Textarea
+                id="reason"
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                placeholder="Опишите нарушение..."
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleReportUser} disabled={!reportReason}>
+                Отправить жалобу
+              </Button>
+              <Button variant="outline" onClick={() => setIsReportOpen(false)}>
+                Отмена
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Создание канала */}
+      <Dialog open={isChannelOpen} onOpenChange={setIsChannelOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Создать канал</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="channelName">Название канала</Label>
+              <Input
+                id="channelName"
+                value={channelName}
+                onChange={(e) => setChannelName(e.target.value)}
+                placeholder="Введите название канала"
+              />
+            </div>
+            <div>
+              <Label htmlFor="channelDesc">Описание</Label>
+              <Textarea
+                id="channelDesc"
+                value={channelDescription}
+                onChange={(e) => setChannelDescription(e.target.value)}
+                placeholder="Описание канала (опционально)"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleCreateChannel} disabled={!channelName}>
+                Создать канал
+              </Button>
+              <Button variant="outline" onClick={() => setIsChannelOpen(false)}>
+                Отмена
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
