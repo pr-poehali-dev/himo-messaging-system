@@ -47,9 +47,7 @@ const Index = () => {
   const [activeTab, setActiveTab] = useState('chats');
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [message, setMessage] = useState('');
-  const [users, setUsers] = useState<User[]>([
-    { id: 1, username: 'Himo', uniqueId: 'HIMO001', status: 'online', role: 'admin', friends: [] },
-  ]);
+  const [users, setUsers] = useState<User[]>([]);
   
   const [chats] = useState<Chat[]>([
     { id: 1, name: 'Общий чат', type: 'group', lastMessage: 'Привет всем!', timestamp: '14:30', unread: 2 },
@@ -62,6 +60,34 @@ const Index = () => {
     { id: 2, sender: 'AutoBot', content: 'Добро пожаловать в чат! Я могу помочь с автоматизацией задач.', timestamp: '14:31', type: 'bot' },
   ]);
 
+  // Загрузка пользователей из localStorage
+  useEffect(() => {
+    const savedUsers = localStorage.getItem('himoUsers');
+    if (savedUsers) {
+      setUsers(JSON.parse(savedUsers));
+    } else {
+      // Создаем админа по умолчанию если нет сохраненных пользователей
+      const defaultAdmin: User = {
+        id: 1, 
+        username: 'Himo', 
+        uniqueId: 'HIMO001', 
+        status: 'online', 
+        role: 'admin', 
+        friends: []
+      };
+      const initialUsers = [defaultAdmin];
+      setUsers(initialUsers);
+      localStorage.setItem('himoUsers', JSON.stringify(initialUsers));
+    }
+  }, []);
+
+  // Сохранение пользователей в localStorage при изменении
+  useEffect(() => {
+    if (users.length > 0) {
+      localStorage.setItem('himoUsers', JSON.stringify(users));
+    }
+  }, [users]);
+
   const generateUniqueId = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let result = '';
@@ -72,15 +98,18 @@ const Index = () => {
   };
 
   const handleLogin = () => {
-    if (username === 'Himo' && password === '12345678') {
-      const admin = users.find(u => u.username === 'Himo');
-      setCurrentUser(admin || null);
-      setIsAuthenticated(true);
-    } else if (username && password) {
+    if (username && password) {
       const user = users.find(u => u.username === username);
       if (user) {
+        // Для админа проверяем пароль
+        if (user.role === 'admin' && password !== '12345678') {
+          return;
+        }
+        // Для обычных пользователей можно добавить проверку сохраненного пароля
         setCurrentUser(user);
         setIsAuthenticated(true);
+        setUsername('');
+        setPassword('');
       }
     }
   };
@@ -90,18 +119,32 @@ const Index = () => {
       const existingUser = users.find(u => u.username === username);
       if (!existingUser) {
         const newUser: User = {
-          id: users.length + 1,
+          id: Math.max(...users.map(u => u.id), 0) + 1,
           username,
           uniqueId: generateUniqueId(),
           status: 'online',
           role: 'user',
           friends: []
         };
-        setUsers([...users, newUser]);
+        const updatedUsers = [...users, newUser];
+        setUsers(updatedUsers);
         setCurrentUser(newUser);
         setIsAuthenticated(true);
+        setUsername('');
+        setPassword('');
       }
     }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    setUsername('');
+    setPassword('');
+    setSelectedChat(null);
+    setMessage('');
+    setFriendId('');
+    setActiveTab('chats');
   };
 
   const handleAddFriend = () => {
@@ -251,6 +294,10 @@ const Index = () => {
                 <span className="text-xs text-muted-foreground">ID: {currentUser?.uniqueId}</span>
               </div>
             </div>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
+              <Icon name="LogOut" className="w-4 h-4 mr-1" />
+              Выйти
+            </Button>
           </div>
         </div>
       </div>
